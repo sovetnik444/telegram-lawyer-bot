@@ -1,43 +1,34 @@
-import logging
 import os
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
+from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext
 from groq import Groq
 
-# 🔐 Получение ключей из переменных окружения
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 
-# Инициализация клиента Groq
 client = Groq(api_key=GROQ_API_KEY)
-logging.basicConfig(level=logging.INFO)
-
-# Простая история сообщений на 3 последних
 user_histories = {}
 
-# /start команда
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def start(update: Update, context: CallbackContext):
     keyboard = [[InlineKeyboardButton("👨‍⚖ Связаться с юристом", url="https://t.me/sovetnik_moscow")]]
-    await update.message.reply_text(
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    update.message.reply_text(
         "Здравствуйте! Я виртуальный помощник-юрист. Задайте ваш вопрос:",
-        reply_markup=InlineKeyboardMarkup(keyboard)
+        reply_markup=reply_markup
     )
 
-# Обработка текстовых сообщений
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def handle_message(update: Update, context: CallbackContext):
     user_id = update.message.from_user.id
     user_input = update.message.text
 
-    # Сохраняем историю пользователя
     if user_id not in user_histories:
         user_histories[user_id] = []
     user_histories[user_id].append({"role": "user", "content": user_input})
     user_histories[user_id] = user_histories[user_id][-3:]
 
-    # Системная инструкция (инструкция для ИИ)
     system_prompt = {
         "role": "system",
-        "content": "Ты профессиональный юрист. Отвечай ясно, юридически грамотно, на русском языке, как будто ты адвокат-консультант. Не пиши 'как ИИ', говори от первого лица. Будь вежлив и деловит."
+        "content": "Ты профессиональный юрист. Отвечай ясно, юридически грамотно, на русском языке, не упоминая что ты ИИ."
     }
 
     messages = [system_prompt] + user_histories[user_id]
@@ -48,17 +39,19 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             messages=messages
         )
         reply = response.choices[0].message.content
-        await update.message.reply_text(reply)
+        update.message.reply_text(reply)
     except Exception as e:
-        logging.error(e)
-        await update.message.reply_text("⚠️ Произошла ошибка. Попробуйте позже.")
+        update.message.reply_text("⚠️ Ошибка. Попробуйте позже.")
 
-# Основной запуск
 def main():
-    app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    app.run_polling()
+    updater = Updater(TELEGRAM_BOT_TOKEN, use_context=True)
+    dp = updater.dispatcher
+
+    dp.add_handler(CommandHandler("start", start))
+    dp.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_message))
+
+    updater.start_polling()
+    updater.idle()
 
 if __name__ == '__main__':
     main()
