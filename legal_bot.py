@@ -215,6 +215,70 @@ def make_llm_answer(user_text: str, memory: deque, profile_summary: Optional[str
     draft = call_groq(build_messages(user_text, memory, profile_summary), temperature=0.2, max_tokens=420)
     return russianize(draft)
 
+# ====== ПРОФИЛЬ ДЕЛА: ИЗВЛЕЧЕНИЕ ФАКТОВ И САММАРИ ======
+def update_profile_from_text(profile: "CaseProfile", low_text: str) -> None:
+    if ("развод" in low_text) or ("расторж" in low_text):
+        profile.topic = profile.topic or "divorce"
+
+    # Дети
+    if re.search(r"без\s+дет", low_text):
+        profile.divorce_has_children = False
+    elif re.search(r"(есть|имеются)\s+дет|ребенок|дети|сын|дочь", low_text):
+        profile.divorce_has_children = True
+
+    # Согласие
+    if re.search(r"обоюдн|взаимн.*соглас|оба\s+соглас|согласны", low_text):
+        profile.divorce_mutual_consent = True
+    elif re.search(r"не\s*соглас|против\s+развод", low_text):
+        profile.divorce_mutual_consent = False
+
+    # Спор о имуществе
+    if re.search(r"раздел\s+имуществ|спор\s+об?\s+имуществ|делить\s+имуществ", low_text):
+        profile.divorce_property_dispute = True
+
+    # Супруг уклоняется/пропал/адрес неизвестен
+    if re.search(r"неизвестн.*место|не\s+зна(ю|ем)\s+где|уклоняетс|не\s+являетс|пропал", low_text):
+        profile.divorce_spouse_absent = True
+
+    # Беременность
+    if re.search(r"беремен", low_text):
+        profile.divorce_pregnancy = True
+
+    # Проживание детей
+    if re.search(r"дет(и|ь)\s+(со\s+мной|со\s+мной)|ребенок\s+со\s+мной", low_text):
+        profile.divorce_child_residence = profile.divorce_child_residence or "с заявителем"
+    elif re.search(r"(дети|ребенок)\s+с\s+матер", low_text):
+        profile.divorce_child_residence = "с матерью"
+    elif re.search(r"(дети|ребенок)\s+с\s+отц", low_text):
+        profile.divorce_child_residence = "с отцом"
+
+    # Алименты
+    if re.search(r"алименты|взыскать\s+алименты|алиментов", low_text):
+        profile.divorce_child_support = True
+
+
+def summarize_profile(profile: Optional["CaseProfile"]) -> Optional[str]:
+    if not profile:
+        return None
+    parts: List[str] = []
+    if profile.topic == "divorce":
+        parts.append("Тема: развод")
+        if profile.divorce_has_children is not None:
+            parts.append(f"Есть дети: {'да' if profile.divorce_has_children else 'нет'}")
+        if profile.divorce_mutual_consent is not None:
+            parts.append(f"Согласие: {'есть' if profile.divorce_mutual_consent else 'нет'}")
+        if profile.divorce_property_dispute is not None:
+            parts.append(f"Спор об имуществе: {'да' if profile.divorce_property_dispute else 'нет'}")
+        if profile.divorce_spouse_absent is not None and profile.divorce_spouse_absent:
+            parts.append("Супруг уклоняется/адрес неизвестен")
+        if profile.divorce_pregnancy:
+            parts.append("Беременность")
+        if profile.divorce_child_residence:
+            parts.append(f"Дети проживают: {profile.divorce_child_residence}")
+        if profile.divorce_child_support is not None:
+            parts.append(f"Нужны алименты: {'да' if profile.divorce_child_support else 'нет'}")
+    return "; ".join(parts) if parts else None
+
 # ====== ЮР-КАРТОЧКИ (как раньше) ======
 BERLIN_TZ_DATE = datetime.datetime.now().strftime("%d.%m.%Y")
 
