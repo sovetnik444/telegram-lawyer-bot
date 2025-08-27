@@ -256,6 +256,105 @@ def update_profile_from_text(profile: "CaseProfile", low_text: str) -> None:
     if re.search(r"алименты|взыскать\s+алименты|алиментов", low_text):
         profile.divorce_child_support = True
 
+    # Труд
+    if re.search(r"(уволен|увольнени|сокращен|сокращени)", low_text):
+        profile.topic = profile.topic or "labor"
+        profile.labor_illegal_dismissal = True if re.search(r"незаконн|без\s+основан", low_text) else profile.labor_illegal_dismissal
+    if re.search(r"не\s*выплат(или|или)\s*зарплат|задолженность\s*по\s*зарплат", low_text):
+        profile.topic = profile.topic or "labor"
+        profile.labor_unpaid_wages = True
+    if re.search(r"отпуск|компенсаци(я|ю)\s*за\s*отпуск", low_text):
+        profile.topic = profile.topic or "labor"
+        profile.labor_vacation_dispute = True
+
+    # Штрафы / КоАП
+    if re.search(r"штраф|коап|постановлени\s*по\s*делу\s*об\s*админ", low_text):
+        profile.topic = profile.topic or "fines"
+        m = re.search(r"ст\.?\s*(\d+[\.-]?\d*)\s*коап", low_text)
+        if m:
+            profile.koap_article = m.group(1)
+        if re.search(r"обжал|оспор", low_text):
+            profile.koap_need_appeal = True
+
+    # Аренда/Жилье
+    if re.search(r"аренд|съемн|найм\s+жил", low_text):
+        profile.topic = profile.topic or "rent"
+        if re.search(r"я\s*сдаю|мой\s*квартирант|как\s*собственник", low_text):
+            profile.rent_is_landlord = True
+        if re.search(r"я\s*снимаю|арендатор", low_text):
+            profile.rent_is_tenant = True
+        if re.search(r"долг|задолженност", low_text):
+            profile.rent_debt = True
+
+    # Миграция
+    if re.search(r"внж|рвп|патент|гражданств|миграц|пмж", low_text):
+        profile.topic = profile.topic or "migration"
+        m = re.search(r"(внж|рвп|патент|гражданство|пмж)", low_text)
+        if m:
+            profile.migration_stage = m.group(1)
+
+    # Налоги
+    if re.search(r"налог|ндфл|усн|ип\s*налог|имущественн\s*вычет", low_text):
+        profile.topic = profile.topic or "taxes"
+        m = re.search(r"(ндфл|усн|патент\s*ип|имущественн(ый|ые)\s*вычет)", low_text)
+        if m:
+            profile.tax_kind = m.group(1)
+
+    # Договоры
+    if re.search(r"договор|контракт", low_text):
+        profile.topic = profile.topic or "contracts"
+        m = re.search(r"(купл[ья]-продаж|подряд|аренд|поставк|услуг)", low_text)
+        if m:
+            profile.contract_type = m.group(1)
+        if re.search(r"пен(я|и)|неусто(йк|йка)", low_text):
+            profile.contract_penalty = True
+
+    # Наследство
+    if re.search(r"наследств|завещани|наследник", low_text):
+        profile.topic = profile.topic or "inheritance"
+        if re.search(r"по\s*завещан", low_text):
+            profile.inherit_by_will = True
+        if re.search(r"пропустил(и)?\s*срок|восстановить\s*срок", low_text):
+            profile.inherit_deadline_issue = True
+
+    # Банкротство
+    if re.search(r"банкротств|финансов(ая|ое)\s*несостоятельност", low_text):
+        profile.topic = profile.topic or "bankruptcy"
+        if re.search(r"физ(ическое|лицо)|гражданин", low_text):
+            profile.bankruptcy_person = "физ"
+        if re.search(r"юр(ическое|лицо)|компан", low_text):
+            profile.bankruptcy_person = profile.bankruptcy_person or "юр"
+        m = re.search(r"(\d+[\s\u00A0]*[мМ]?[лЛ]?н?)\s*руб", low_text)
+        if m:
+            profile.bankruptcy_debt_sum = m.group(1)
+
+    # Исполнительное производство
+    if re.search(r"пристав|фссп|исполнител(ьн|ное)\s*производ", low_text):
+        profile.topic = profile.topic or "enforcement"
+        if re.search(r"дело\s*возбуждено|возбудили", low_text):
+            profile.enforcement_case_opened = True
+        m = re.search(r"долг\s*по\s*(алим|штраф|кредит|жкх)", low_text)
+        if m:
+            profile.enforcement_debt_kind = m.group(1)
+
+    # Потребитель/ЗОЗПП
+    if re.search(r"зозпп|потребител|интернет\s*магазин|маркетплейс|возврат\s*товар", low_text):
+        profile.topic = profile.topic or "consumer"
+        if re.search(r"дистанционн|онлайн|интернет", low_text):
+            profile.consumer_distance_sale = True
+        if re.search(r"хочу\s*вернуть|вернуть\s*деньги|возврат", low_text):
+            profile.consumer_return_request = True
+
+    # ДТП/страхование
+    if re.search(r"дтп|авар(ия|ии)|столкновени|европротокол|осаго|каско", low_text):
+        profile.topic = profile.topic or "traffic"
+        if re.search(r"осаго", low_text):
+            profile.car_insurance = "ОСАГО"
+        if re.search(r"каско", low_text):
+            profile.car_insurance = profile.car_insurance or "КАСКО"
+        if re.search(r"европротокол", low_text):
+            profile.car_europrotocol = True
+
 
 def summarize_profile(profile: Optional["CaseProfile"]) -> Optional[str]:
     if not profile:
@@ -277,6 +376,69 @@ def summarize_profile(profile: Optional["CaseProfile"]) -> Optional[str]:
             parts.append(f"Дети проживают: {profile.divorce_child_residence}")
         if profile.divorce_child_support is not None:
             parts.append(f"Нужны алименты: {'да' if profile.divorce_child_support else 'нет'}")
+    elif profile.topic == "labor":
+        parts.append("Тема: трудовой спор")
+        if profile.labor_unpaid_wages:
+            parts.append("Долг по зарплате")
+        if profile.labor_illegal_dismissal:
+            parts.append("Незаконное увольнение")
+        if profile.labor_vacation_dispute:
+            parts.append("Спор по отпуску")
+    elif profile.topic == "fines":
+        parts.append("Тема: КоАП/штраф")
+        if profile.koap_article:
+            parts.append(f"Статья КоАП: {profile.koap_article}")
+    elif profile.topic == "rent":
+        parts.append("Тема: аренда")
+        parts.append(f"Статус: {'собственник' if profile.rent_is_landlord else ('арендатор' if profile.rent_is_tenant else '—')}")
+        if profile.rent_debt:
+            parts.append("Есть долг")
+    elif profile.topic == "migration":
+        parts.append("Тема: миграция")
+        if profile.migration_stage:
+            parts.append(f"Этап: {profile.migration_stage}")
+    elif profile.topic == "taxes":
+        parts.append("Тема: налоги")
+        if profile.tax_kind:
+            parts.append(f"Вид: {profile.tax_kind}")
+        if profile.tax_period:
+            parts.append(f"Период: {profile.tax_period}")
+    elif profile.topic == "contracts":
+        parts.append("Тема: договор")
+        if profile.contract_type:
+            parts.append(f"Тип: {profile.contract_type}")
+        if profile.contract_penalty:
+            parts.append("Неустойка")
+    elif profile.topic == "inheritance":
+        parts.append("Тема: наследство")
+        if profile.inherit_by_will:
+            parts.append("По завещанию")
+        if profile.inherit_deadline_issue:
+            parts.append("Проблема со сроком")
+    elif profile.topic == "bankruptcy":
+        parts.append("Тема: банкротство")
+        if profile.bankruptcy_person:
+            parts.append(f"Лицо: {profile.bankruptcy_person}")
+        if profile.bankruptcy_debt_sum:
+            parts.append(f"Долг: {profile.bankruptcy_debt_sum}")
+    elif profile.topic == "enforcement":
+        parts.append("Тема: приставы")
+        if profile.enforcement_case_opened:
+            parts.append("Дело возбуждено")
+        if profile.enforcement_debt_kind:
+            parts.append(f"Долг: {profile.enforcement_debt_kind}")
+    elif profile.topic == "consumer":
+        parts.append("Тема: потребитель")
+        if profile.consumer_distance_sale:
+            parts.append("Дистанционная покупка")
+        if profile.consumer_return_request:
+            parts.append("Требуется возврат")
+    elif profile.topic == "traffic":
+        parts.append("Тема: ДТП")
+        if profile.car_insurance:
+            parts.append(f"Полис: {profile.car_insurance}")
+        if profile.car_europrotocol:
+            parts.append("Европротокол")
     return "; ".join(parts) if parts else None
 
 # ====== ЮР-КАРТОЧКИ (как раньше) ======
@@ -311,6 +473,40 @@ class CaseProfile:
     divorce_child_residence: Optional[str] = None  # мать/отец/с кем проживают
     divorce_child_support: Optional[bool] = None  # нужен вопрос алиментов
     city: Optional[str] = None
+    # Труд
+    labor_unpaid_wages: Optional[bool] = None
+    labor_illegal_dismissal: Optional[bool] = None
+    labor_vacation_dispute: Optional[bool] = None
+    # Штрафы/КоАП
+    koap_article: Optional[str] = None
+    koap_need_appeal: Optional[bool] = None
+    # Аренда/Жилье
+    rent_is_landlord: Optional[bool] = None
+    rent_is_tenant: Optional[bool] = None
+    rent_debt: Optional[bool] = None
+    # Миграция
+    migration_stage: Optional[str] = None  # рвп/внж/гражданство/патент
+    # Налоги
+    tax_kind: Optional[str] = None  # ндфл/ип/усн/имущественный
+    tax_period: Optional[str] = None
+    # Договоры
+    contract_type: Optional[str] = None  # купля-продажа/подряд/аренда/поставка
+    contract_penalty: Optional[bool] = None
+    # Наследство
+    inherit_by_will: Optional[bool] = None
+    inherit_deadline_issue: Optional[bool] = None
+    # Банкротство
+    bankruptcy_person: Optional[str] = None  # физ/юр
+    bankruptcy_debt_sum: Optional[str] = None
+    # Исполнение/приставы
+    enforcement_case_opened: Optional[bool] = None
+    enforcement_debt_kind: Optional[str] = None
+    # Потребитель/ЗОЗПП
+    consumer_distance_sale: Optional[bool] = None
+    consumer_return_request: Optional[bool] = None
+    # ДТП/страхование
+    car_insurance: Optional[str] = None  # ОСАГО/КАСКО
+    car_europrotocol: Optional[bool] = None
 
 PROCESS_MAP = {
     "арбитраж": "АПК", "апк": "АПК",
@@ -418,6 +614,168 @@ class LegalAnswerEngine:
 
         card = render_short_card(title, steps, " ".join(facts_parts), norm_refs)
         return card
+
+    # ===== Труд =====
+    def answer_labor(self, text: str, p: "CaseProfile") -> AnswerCard:
+        title = "Трудовой спор: алгоритм защиты"
+        steps = [
+            "Соберите доказательства: трудовой договор, табели, расчётные листки.",
+            "Направьте работодателю претензию, при необходимости — жалобу в ГИТ/прокуратуру.",
+            "Иск в суд: зарплата/восстановление — по месту вашей работы/жительства."
+        ]
+        facts = []
+        if p.labor_unpaid_wages:
+            facts.append("Задолженность по зарплате — ст. 236 ТК РФ (проценты).")
+        if p.labor_illegal_dismissal:
+            facts.append("Незаконное увольнение — восстановление и средний заработок (ст. 394 ТК РФ).")
+        if p.labor_vacation_dispute:
+            facts.append("Компенсация за отпуск — ст. 127 ТК РФ.")
+        refs = [
+            SourceHit("ТК РФ", "https://www.consultant.ru/document/cons_doc_LAW_34683/", "ст. 127, 236, 394 ТК РФ", "", BERLIN_TZ_DATE)
+        ]
+        return render_short_card(title, steps, " ".join(facts) or "Уточните предмет спора.", refs)
+
+    # ===== КоАП/штраф =====
+    def answer_fines(self, text: str, p: "CaseProfile") -> AnswerCard:
+        title = "Обжалование постановления по КоАП"
+        steps = [
+            "Проверьте срок: 10 суток со дня вручения/получения копии постановления.",
+            "Подайте жалобу через вынесший орган или напрямую в суд.",
+            "Приложите доказательства, ходатайствуйте о восстановлении срока при пропуске."
+        ]
+        facts = f"Статья: {p.koap_article or 'уточните'}; срок — 10 суток; госпошлина не уплачивается."
+        refs = [
+            SourceHit("КоАП РФ", "https://www.consultant.ru/document/cons_doc_LAW_34661/", "ст. 30.1–30.3 КоАП РФ", "", BERLIN_TZ_DATE)
+        ]
+        return render_short_card(title, steps, facts, refs)
+
+    # ===== Аренда/жильё =====
+    def answer_rent(self, text: str, p: "CaseProfile") -> AnswerCard:
+        title = "Аренда жилья: права и действия"
+        steps = [
+            "Проверьте договор: срок, порядок расторжения, штрафы.",
+            "Составьте претензию: задолженность/нарушения/повреждения.",
+            "Иск: взыскание долга/расторжение/выселение при существенных нарушениях."
+        ]
+        role = "собственник" if p.rent_is_landlord else ("арендатор" if p.rent_is_tenant else "уточните статус")
+        facts = f"Статус: {role}; долг: {'есть' if p.rent_debt else 'нет/неизвестно'}."
+        refs = [
+            SourceHit("ГК РФ", "https://www.consultant.ru/document/cons_doc_LAW_5142/", "ст. 450–452, 606–624 ГК РФ", "", BERLIN_TZ_DATE)
+        ]
+        return render_short_card(title, steps, facts, refs)
+
+    # ===== Миграция =====
+    def answer_migration(self, text: str, p: "CaseProfile") -> AnswerCard:
+        title = "Миграционный статус: шаги оформления"
+        steps = [
+            "Определите основание: работа, семья, образование, носитель русского языка.",
+            "Подготовьте пакет документов и подайте в МВД/через ГУВМ.",
+            "Соблюдайте сроки уведомлений и продления статуса."
+        ]
+        facts = f"Этап: {p.migration_stage or 'уточните (РВП/ВНЖ/гражданство/патент)'}; возможны квоты/собеседование."
+        refs = [
+            SourceHit("Закон о правовом положении иностр.", "https://www.consultant.ru/document/cons_doc_LAW_37868/", "ФЗ-115, ФЗ-62", "", BERLIN_TZ_DATE)
+        ]
+        return render_short_card(title, steps, facts, refs)
+
+    # ===== Налоги =====
+    def answer_taxes(self, text: str, p: "CaseProfile") -> AnswerCard:
+        title = "Налоги: порядок и сроки"
+        steps = [
+            "Определите режим и объект налогообложения.",
+            "Сдайте декларацию/отчеты и оплатите налог в срок.",
+            "При доначислении — проверьте законность, подайте возражения/жалобу."
+        ]
+        facts = f"Вид налога: {p.tax_kind or 'уточните'}; период: {p.tax_period or '—'}; возможны вычеты."
+        refs = [
+            SourceHit("НК РФ", "https://www.consultant.ru/document/cons_doc_LAW_28165/", "общие положения НК РФ", "", BERLIN_TZ_DATE)
+        ]
+        return render_short_card(title, steps, facts, refs)
+
+    # ===== Договоры =====
+    def answer_contracts(self, text: str, p: "CaseProfile") -> AnswerCard:
+        title = "Договорный спор: доказательства и требования"
+        steps = [
+            "Проверьте существенные условия и переписку.",
+            "Направьте претензию с расчётом неустойки/убытков.",
+            "Иск по подсудности: место ответчика/исполнения договора."
+        ]
+        facts = f"Тип: {p.contract_type or 'уточните'}; неустойка: {'да' if p.contract_penalty else 'нет/—'}."
+        refs = [
+            SourceHit("ГК РФ", "https://www.consultant.ru/document/cons_doc_LAW_5142/", "общая часть; ст. 309, 330, 450–452 ГК РФ", "", BERLIN_TZ_DATE)
+        ]
+        return render_short_card(title, steps, facts, refs)
+
+    # ===== Наследство =====
+    def answer_inheritance(self, text: str, p: "CaseProfile") -> AnswerCard:
+        title = "Наследство: сроки и порядок"
+        steps = [
+            "Обратитесь к нотариусу по последнему месту жительства наследодателя.",
+            "Срок принятия — 6 месяцев; при пропуске — восстановление через суд.",
+            "Споры о долях/обязательной доле — исковое производство."
+        ]
+        facts = f"По завещанию: {'да' if p.inherit_by_will else 'нет/—'}; срок: {'пропуск' if p.inherit_deadline_issue else 'в пределах/—'}."
+        refs = [
+            SourceHit("ГК РФ", "https://www.consultant.ru/document/cons_doc_LAW_5142/", "раздел V. Наследственное право", "", BERLIN_TZ_DATE)
+        ]
+        return render_short_card(title, steps, facts, refs)
+
+    # ===== Банкротство =====
+    def answer_bankruptcy(self, text: str, p: "CaseProfile") -> AnswerCard:
+        title = "Банкротство: критерии и шаги"
+        steps = [
+            "Оцените признаки неплатежеспособности и размер долга.",
+            "Подготовьте заявление, выберите СРО арбитражных управляющих.",
+            "Подача в арбитражный суд по месту должника."
+        ]
+        facts = f"Лицо: {p.bankruptcy_person or 'физ/юр?'}; долг: {p.bankruptcy_debt_sum or '—'}."
+        refs = [
+            SourceHit("Закон о банкротстве", "https://www.consultant.ru/document/cons_doc_LAW_39331/", "127-ФЗ", "", BERLIN_TZ_DATE)
+        ]
+        return render_short_card(title, steps, facts, refs)
+
+    # ===== Исполнительное производство =====
+    def answer_enforcement(self, text: str, p: "CaseProfile") -> AnswerCard:
+        title = "Исполнительное производство: права должника/взыскателя"
+        steps = [
+            "Проверьте постановление о возбуждении, сроки, меры взыскания.",
+            "Заявите ходатайства (рассрочка/отсрочка, оспаривание ареста).",
+            "Жалоба старшему приставу/в суд при нарушениях."
+        ]
+        facts = f"Долг: {p.enforcement_debt_kind or 'уточните'}; дело возбуждено: {'да' if p.enforcement_case_opened else '—'}."
+        refs = [
+            SourceHit("Закон об исполнительном производстве", "https://www.consultant.ru/document/cons_doc_LAW_34587/", "229-ФЗ", "", BERLIN_TZ_DATE)
+        ]
+        return render_short_card(title, steps, facts, refs)
+
+    # ===== Потребитель =====
+    def answer_consumer(self, text: str, p: "CaseProfile") -> AnswerCard:
+        title = "Защита прав потребителя: претензия и иск"
+        steps = [
+            "Претензия продавцу: недостатки/сроки, требование возврата/замены/ремонта.",
+            "При отказе — иск, штраф 50% по ст. 13 ЗоЗПП при неудовлетворении требований.",
+            "Неустойка и моральный вред — по расчёту."
+        ]
+        facts = f"Дистанционная продажа: {'да' if p.consumer_distance_sale else 'нет/—'}; возврат: {'да' if p.consumer_return_request else '—'}."
+        refs = [
+            SourceHit("ЗоЗПП", "https://www.consultant.ru/document/cons_doc_LAW_305/", "ст. 18–24, 13 ЗоЗПП", "", BERLIN_TZ_DATE)
+        ]
+        return render_short_card(title, steps, facts, refs)
+
+    # ===== ДТП/страхование =====
+    def answer_traffic(self, text: str, p: "CaseProfile") -> AnswerCard:
+        title = "ДТП и страховая выплата"
+        steps = [
+            "Оформите извещение (или европротокол при условиях).",
+            "Уведомите страховщика и подайте заявление с комплектом документов.",
+            "При недоплате — досудебная претензия и иск с неустойкой."
+        ]
+        ins = p.car_insurance or "ОСАГО/КАСКО?"
+        facts = f"Полис: {ins}; европротокол: {'да' if p.car_europrotocol else 'нет/—'}."
+        refs = [
+            SourceHit("Закон об ОСАГО", "https://www.consultant.ru/document/cons_doc_LAW_39331/", "40-ФЗ; Правила страхования", "", BERLIN_TZ_DATE)
+        ]
+        return render_short_card(title, steps, facts, refs)
 
     def answer_cassation(self, user_text: str) -> AnswerCard:
         process = detect_process(user_text)
@@ -530,20 +888,43 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         CHAT_PROFILE[chat_id] = prof
     update_profile_from_text(prof, low)
 
-    # ===== 2) Попытка выдать юр-карточку (короткий формат)
-    card = ENGINE.maybe_compose_card(text)
-    if card:
-        answer_text = ENGINE.card_as_text(card)
-        answer_text = russianize(answer_text)
+    # ===== 2) Попытка выдать юр-карточку (короткий формат, много доменов)
+    base_card = ENGINE.maybe_compose_card(text)
+    if base_card:
+        answer_text = russianize(ENGINE.card_as_text(base_card))
         await update.message.reply_text(answer_text, reply_markup=contact_keyboard())
         CHAT_MEMORY[chat_id].append({"role": "assistant", "content": answer_text})
         return
 
-    # Развод — карточка с учетом профиля
+    # Доменная маршрутизация с учетом профиля
+    routed = False
     if ("развод" in low) or ("расторж" in low) or prof.topic == "divorce":
-        prof.topic = "divorce"
-        dcard = ENGINE.answer_divorce(text, prof)
-        answer_text = russianize(ENGINE.card_as_text(dcard))
+        prof.topic = "divorce"; card = ENGINE.answer_divorce(text, prof); routed = True
+    elif ("уволен" in low) or ("зарплат" in low) or prof.topic == "labor":
+        prof.topic = "labor"; card = ENGINE.answer_labor(text, prof); routed = True
+    elif ("штраф" in low) or ("коап" in low) or prof.topic == "fines":
+        prof.topic = "fines"; card = ENGINE.answer_fines(text, prof); routed = True
+    elif ("аренд" in low) or ("снимаю" in low) or ("квартирант" in low) or prof.topic == "rent":
+        prof.topic = "rent"; card = ENGINE.answer_rent(text, prof); routed = True
+    elif ("внж" in low) or ("рвп" in low) or ("патент" in low) or ("гражданств" in low) or prof.topic == "migration":
+        prof.topic = "migration"; card = ENGINE.answer_migration(text, prof); routed = True
+    elif ("налог" in low) or ("ндфл" in low) or ("усн" in low) or prof.topic == "taxes":
+        prof.topic = "taxes"; card = ENGINE.answer_taxes(text, prof); routed = True
+    elif ("договор" in low) or ("контракт" in low) or prof.topic == "contracts":
+        prof.topic = "contracts"; card = ENGINE.answer_contracts(text, prof); routed = True
+    elif ("наследств" in low) or ("завещан" in low) or prof.topic == "inheritance":
+        prof.topic = "inheritance"; card = ENGINE.answer_inheritance(text, prof); routed = True
+    elif ("банкрот" in low) or prof.topic == "bankruptcy":
+        prof.topic = "bankruptcy"; card = ENGINE.answer_bankruptcy(text, prof); routed = True
+    elif ("пристав" in low) or ("исполнител" in low) or prof.topic == "enforcement":
+        prof.topic = "enforcement"; card = ENGINE.answer_enforcement(text, prof); routed = True
+    elif ("потребител" in low) or ("зозпп" in low) or ("возврат\s*товар" in low) or prof.topic == "consumer":
+        prof.topic = "consumer"; card = ENGINE.answer_consumer(text, prof); routed = True
+    elif ("дтп" in low) or ("осаго" in low) or ("каско" in low) or ("европротокол" in low) or prof.topic == "traffic":
+        prof.topic = "traffic"; card = ENGINE.answer_traffic(text, prof); routed = True
+
+    if routed:
+        answer_text = russianize(ENGINE.card_as_text(card))
         await update.message.reply_text(answer_text, reply_markup=contact_keyboard())
         CHAT_MEMORY[chat_id].append({"role": "assistant", "content": answer_text})
         return
