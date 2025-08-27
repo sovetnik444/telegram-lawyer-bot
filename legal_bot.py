@@ -40,6 +40,7 @@ log = logging.getLogger("ai-lawyer-bot")
 # Память диалога (≈4 обмена)
 MEMORY_MAXLEN = 8
 CHAT_MEMORY: defaultdict[int, deque] = defaultdict(lambda: deque(maxlen=MEMORY_MAXLEN))
+CHAT_PROFILE: dict[int, "CaseProfile"] = {}
 
 # ====== КНОПКА СВЯЗИ ======
 def contact_keyboard() -> InlineKeyboardMarkup:
@@ -153,7 +154,7 @@ OFFTOPIC_REPLY = (
 )
 
 # ====== LLM С ОБНОВЛЁННЫМ ЖЁСТКИМ SYSTEM-ПРОМПТОМ ======
-def build_messages(user_text: str, memory: deque) -> List[dict]:
+def build_messages(user_text: str, memory: deque, profile_summary: Optional[str] = None) -> List[dict]:
     sys = (
         "Ты — русскоязычный помощник «AI-юрист (бета)».\n"
         "ОТВЕЧАЙ ТОЛЬКО НА ЮРИДИЧЕСКИЕ ВОПРОСЫ ПО ПРАВУ РФ. "
@@ -164,10 +165,11 @@ def build_messages(user_text: str, memory: deque) -> List[dict]:
     preface = "Я — AI-юрист (бета). "
     tail = "За деталями можно обратиться к живому юристу."
     history = list(memory)
+    profile_block = (f"\nКонтекст дела: {profile_summary}" if profile_summary else "")
     current = {
         "role": "user",
         "content": (
-            f"Вопрос пользователя: {user_text}\n\n"
+            f"Вопрос пользователя: {user_text}{profile_block}\n\n"
             f"Ответ должен начинаться: «{preface}» и заканчиваться: «{tail}». Только русский, без латиницы."
         )
     }
@@ -209,8 +211,8 @@ def russianize(text: str) -> str:
         text += f" {tail}"
     return drop_latin_sentences(text).strip()
 
-def make_llm_answer(user_text: str, memory: deque) -> str:
-    draft = call_groq(build_messages(user_text, memory), temperature=0.2, max_tokens=420)
+def make_llm_answer(user_text: str, memory: deque, profile_summary: Optional[str] = None) -> str:
+    draft = call_groq(build_messages(user_text, memory, profile_summary), temperature=0.2, max_tokens=420)
     return russianize(draft)
 
 # ====== ЮР-КАРТОЧКИ (как раньше) ======
@@ -232,6 +234,19 @@ class AnswerCard:
     norm: str
     sources: List[str]
     warning: Optional[str] = None
+
+@dataclass
+class CaseProfile:
+    topic: Optional[str] = None
+    # Развод
+    divorce_has_children: Optional[bool] = None
+    divorce_mutual_consent: Optional[bool] = None
+    divorce_property_dispute: Optional[bool] = None
+    divorce_spouse_absent: Optional[bool] = None  # неизвестно где/уклоняется
+    divorce_pregnancy: Optional[bool] = None
+    divorce_child_residence: Optional[str] = None  # мать/отец/с кем проживают
+    divorce_child_support: Optional[bool] = None  # нужен вопрос алиментов
+    city: Optional[str] = None
 
 PROCESS_MAP = {
     "арбитраж": "АПК", "апк": "АПК",
@@ -300,6 +315,46 @@ class LegalAnswerEngine:
         self.pravo = PravoClient()
         self.ssp   = SspClient()
 
+    # ===== Развод: карточка на основе профиля =====
+    def answer_divorce(self, text: str, profile: "CaseProfile") -> AnswerCard:
+        has_kids = profile.divorce_has_children
+        consent = profile.divorce_mutual_consent
+        prop = profile.divorce_property_dispute
+        absent = profile.divorce_spouse_absent
+
+        title = "Развод: алгоритм и подсудность"
+        steps: List[str] = []
+        facts_parts: List[str] = []
+
+        if has_kids is True or prop is True:
+            steps.append("Подача иска в районный суд по месту ответчика (исключения — ст. 29 ГПК РФ).")
+        else:
+            steps.append("Подача заявления в ЗАГС при взаимном согласии и отсутствии детей.")
+
+        if absent:
+            steps.append("Если супруг уклоняется/место жительства неизвестно — иск в суд (ст. 21 СК РФ).")
+
+        if has_kids:
+            steps.append("Определите место жительства детей и порядок общения; при необходимости — алименты.")
+        else:
+            steps.append("Соберите паспорта, свидетельство о браке, квитанцию госпошлины.")
+
+        if consent is True and not has_kids and not prop:
+            facts_parts.append("При взаимном согласии и без детей — через ЗАГС (ст. 19 СК РФ).")
+        else:
+            facts_parts.append("Через суд при наличии детей/спора/уклонении (ст. 21 СК РФ).")
+
+        if has_kids:
+            facts_parts.append("Алименты: ст. 80–83 СК РФ; определение места жительства: ст. 65, 66 СК РФ.")
+
+        norm_refs = [
+            SourceHit("СК РФ", "https://www.consultant.ru/document/cons_doc_LAW_8982/", "ст. 19, 21, 65, 66, 80–83 СК РФ", "", BERLIN_TZ_DATE),
+            SourceHit("ГПК РФ", "https://www.consultant.ru/document/cons_doc_LAW_39570/", "ст. 29 ГПК РФ", "", BERLIN_TZ_DATE),
+        ]
+
+        card = render_short_card(title, steps, " ".join(facts_parts), norm_refs)
+        return card
+
     def answer_cassation(self, user_text: str) -> AnswerCard:
         process = detect_process(user_text)
         if not process:
@@ -340,9 +395,12 @@ class LegalAnswerEngine:
 
     def maybe_compose_card(self, text: str) -> Optional[AnswerCard]:
         t = text.lower()
-        if not (("кассац" in t) or ("кассацион" in t)):
+        if ("кассац" in t) or ("кассацион" in t):
+            return self.answer_cassation(text)
+        if ("развод" in t) or ("расторж" in t):
+            # Профиль будет подмешан в handle_text
             return None
-        return self.answer_cassation(text)
+        return None
 
     @staticmethod
     def card_as_text(card: AnswerCard) -> str:
@@ -372,6 +430,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     CHAT_MEMORY.pop(chat_id, None)
+    CHAT_PROFILE.pop(chat_id, None)
     await update.message.reply_text("Контекст диалога очищен. Начнём заново?", reply_markup=contact_keyboard())
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -399,8 +458,13 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(OFFTOPIC_REPLY, reply_markup=contact_keyboard())
         return
 
-    # Если юридический вопрос — пишем в память
+    # Если юридический вопрос — пишем в память и обновляем профиль
     CHAT_MEMORY[chat_id].append({"role": "user", "content": text})
+    prof = CHAT_PROFILE.get(chat_id)
+    if prof is None:
+        prof = CaseProfile()
+        CHAT_PROFILE[chat_id] = prof
+    update_profile_from_text(prof, low)
 
     # ===== 2) Попытка выдать юр-карточку (короткий формат)
     card = ENGINE.maybe_compose_card(text)
@@ -411,9 +475,18 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         CHAT_MEMORY[chat_id].append({"role": "assistant", "content": answer_text})
         return
 
+    # Развод — карточка с учетом профиля
+    if ("развод" in low) or ("расторж" in low) or prof.topic == "divorce":
+        prof.topic = "divorce"
+        dcard = ENGINE.answer_divorce(text, prof)
+        answer_text = russianize(ENGINE.card_as_text(dcard))
+        await update.message.reply_text(answer_text, reply_markup=contact_keyboard())
+        CHAT_MEMORY[chat_id].append({"role": "assistant", "content": answer_text})
+        return
+
     # ===== 3) Иначе — обычный LLM-ответ (но в рамке юрдомена)
     try:
-        answer = make_llm_answer(text, CHAT_MEMORY[chat_id])
+        answer = make_llm_answer(text, CHAT_MEMORY[chat_id], summarize_profile(CHAT_PROFILE.get(chat_id)))
     except Exception as e:
         log.exception("LLM error", exc_info=e)
         answer = (
